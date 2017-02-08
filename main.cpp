@@ -19,16 +19,14 @@
 #define ETHER_HDRLEN 14
 #endif
 
+
 using namespace std;
 using json = nlohmann::json;
 
-json j;
-
-
-u_int16_t handle_ethernet(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
-u_int8_t handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
-u_char* handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
-u_char* handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
+json handle_ethernet(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
+json handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
+json handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
+json handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 
 struct my_ip
 {
@@ -73,23 +71,35 @@ struct my_tcp {
 /* looking at ethernet headers */
 void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
-    u_int16_t type = handle_ethernet(args,pkthdr,packet);
+    json js, jsether;
+    jsether = handle_ethernet(args,pkthdr,packet);
+    u_int16_t type = jsether["type"];
+
+    js["ether"] = jsether;
 
     if(type == ETHERTYPE_IP)
     {/* handle IP packet */
-        u_int8_t ip_prot = handle_IP(args,pkthdr,packet);
+        json jsudp;
+        json jstcp;
+        json jsHandle = handle_IP(args,pkthdr,packet);
+        js["ip"] = jsHandle;
+        u_int8_t ip_prot = jsHandle["prot"];
         switch(ip_prot)
         {
             case IPPROTO_ICMP:
                 break;
             case IPPROTO_TCP:
-                handle_TCP(args,pkthdr,packet);
+                js["tcp"] = handle_TCP(args,pkthdr,packet);
+                //jstcp = handle_TCP(args,pkthdr,packet);
+                //js.push_back(jstcp);
                 break;
             case IPPROTO_UDP:
-                handle_UDP(args,pkthdr,packet);
+                js["udp"] = handle_UDP(args,pkthdr,packet);
+                //js.push_back(jsudp);
+
                 break;
         }
-
+        cout << js << endl;
     }
     else if(type == ETHERTYPE_ARP)
     {/* handle arp packet */
@@ -99,7 +109,7 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
     }
 }
 
-u_char* handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
+json handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
     const struct ether_header* ethernetHeader;
     const struct ip* ipHeader;
@@ -110,6 +120,7 @@ u_char* handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* p
     u_char *data;
     int dataLength = 0;
     string dataStr = "";
+    json js;
 
     ethernetHeader = (struct ether_header*)packet;
     ipHeader = (struct ip*)(packet + sizeof(struct ether_header));
@@ -121,8 +132,10 @@ u_char* handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* p
         data = (u_char*)(packet + sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct tcphdr));
         dataLength = pkthdr->len - (sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct tcphdr));
 
-        fprintf(stdout,"TCP: ");
-        fprintf(stdout,"[srcport: %d] -> [dstport:%d]\n",sourcePort, destPort);
+        //fprintf(stdout,"TCP: ");
+        //fprintf(stdout,"[srcport: %d] -> [dstport:%d]\n",sourcePort, destPort);
+        js["srcport"] = sourcePort;
+        js["dstport"] = destPort;
 
         for (int i = 0; i < dataLength; i++)
         {
@@ -136,16 +149,19 @@ u_char* handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* p
         }
         if (dataLength > 0)
         {
-            cout << dataStr << endl;
+            js["data"] = dataStr;
+            //cout << dataStr << endl;
         }
     }
+    return js;
 }
 
-u_char* handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
+json handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
     const struct ether_header* ethernetHeader;
     const struct ip* ipHeader;
     const struct udphdr* udpHeader;
+    json js;
 
     char sourceIp[INET_ADDRSTRLEN];
     char destIp[INET_ADDRSTRLEN];
@@ -164,8 +180,10 @@ u_char* handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* p
         data = (u_char*)(packet + sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr));
         dataLength = pkthdr->len - (sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr));
 
-        fprintf(stdout,"UDP: ");
-        fprintf(stdout,"[srcport: %d] -> [dstport:%d]\n",sourcePort, destPort);
+        //fprintf(stdout,"UDP: ");
+        //fprintf(stdout,"[srcport: %d] -> [dstport:%d]\n",sourcePort, destPort);
+        js["srcport"] = sourcePort;
+        js["dstport"] = destPort;
 
         for (int i = 0; i < dataLength; i++)
         {
@@ -179,18 +197,21 @@ u_char* handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* p
         }
         if (dataLength > 0)
         {
-            cout << dataStr << endl;
+            js["data"] = dataStr;
+            //cout << dataStr << endl;
         }
     }
+    return js;
 }
 
-u_int8_t handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
+json handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
     const struct my_ip* ip;
     u_int length = pkthdr->len;
     u_int hlen,off,version;
     int i;
     u_int8_t prot;
+    json js;
 
     int len;
 
@@ -234,7 +255,15 @@ u_int8_t handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* 
     /* Check to see if we have the first fragment */
     off = ntohs(ip->ip_off);
     if((off & 0x1fff) == 0 )/* aka no 1's in first 13 bits */
-    {/* print SOURCE DESTINATION hlen version len offset */
+    {
+        js["src"] = inet_ntoa(ip->ip_src);
+        js["dst"] = inet_ntoa(ip->ip_dst);
+        js["hlen"] = hlen;
+        js["prot"] = prot;
+        js["version"] = version;
+        js["len"] = len;
+        js["offset"] = off;
+        /* print SOURCE DESTINATION hlen version len offset */
         /*fprintf(stdout,"IP: ");
         fprintf(stdout,"[srcip: %s] -> ",
                 inet_ntoa(ip->ip_src));
@@ -242,16 +271,19 @@ u_int8_t handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* 
                 inet_ntoa(ip->ip_dst),
                 hlen,version,len,off);*/
     }
-    return prot;
+    return js;
 }
 
 /* handle ethernet packets, much of this code gleaned from
  * print-ether.c from tcpdump source
  */
-u_int16_t handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
+json handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
+    json js;
     u_int caplen = pkthdr->caplen;
     u_int length = pkthdr->len;
+    js["caplen"] = caplen;
+    js["length"] = length;
     struct ether_header *eptr;  /* net/ethernet.h */
     u_short ether_type;
 
@@ -264,11 +296,15 @@ u_int16_t handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u
     /* lets start with the ether header... */
     eptr = (struct ether_header *) packet;
     ether_type = ntohs(eptr->ether_type);
+    js["type"] = ether_type;
 
     /* Lets print SOURCE DEST TYPE LENGTH */
-    fprintf(stdout,"ETH: ");
-    fprintf(stdout,"%s ",ether_ntoa((struct ether_addr*)eptr->ether_shost));
-    fprintf(stdout,"%s ",ether_ntoa((struct ether_addr*)eptr->ether_dhost));
+    //fprintf(stdout,"ETH: ");
+    //fprintf(stdout,"%s ",ether_ntoa((struct ether_addr*)eptr->ether_shost));
+    //fprintf(stdout,"%s ",ether_ntoa((struct ether_addr*)eptr->ether_dhost));
+
+    js["srcmac"] = ether_ntoa((struct ether_addr*)eptr->ether_shost);
+    js["dstmac"] = ether_ntoa((struct ether_addr*)eptr->ether_dhost);
 
     /* check to see if we have an ip packet */
     if (ether_type == ETHERTYPE_IP)
@@ -288,7 +324,7 @@ u_int16_t handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u
     }
     fprintf(stdout," %d\n",length);
 
-    return ether_type;
+    return js;
 }
 
 int main(int argc,char **argv)
