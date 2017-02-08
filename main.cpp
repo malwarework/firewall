@@ -9,19 +9,26 @@
 #include <net/ethernet.h>
 #include <netinet/ether.h>
 #include <netinet/tcp.h>
+#include <netinet/udp.h>
 #include <netinet/ip.h>
 #include <array>
 #include <iostream>
+#include <boost/json/src/json.hpp>
 
 #ifndef ETHER_HDRLEN
 #define ETHER_HDRLEN 14
 #endif
 
 using namespace std;
+using json = nlohmann::json;
+
+json j;
 
 
 u_int16_t handle_ethernet(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
-u_char* handle_IP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
+u_int8_t handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
+u_char* handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
+u_char* handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 
 struct my_ip
 {
@@ -63,8 +70,6 @@ struct my_tcp {
     u_short th_urp;		/* urgent pointer */
 };
 
-u_char* handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
-
 /* looking at ethernet headers */
 void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
@@ -72,8 +77,19 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
 
     if(type == ETHERTYPE_IP)
     {/* handle IP packet */
-        handle_IP(args,pkthdr,packet);
-        handle_TCP(args,pkthdr,packet);
+        u_int8_t ip_prot = handle_IP(args,pkthdr,packet);
+        switch(ip_prot)
+        {
+            case IPPROTO_ICMP:
+                break;
+            case IPPROTO_TCP:
+                handle_TCP(args,pkthdr,packet);
+                break;
+            case IPPROTO_UDP:
+                handle_UDP(args,pkthdr,packet);
+                break;
+        }
+
     }
     else if(type == ETHERTYPE_ARP)
     {/* handle arp packet */
@@ -125,12 +141,56 @@ u_char* handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* p
     }
 }
 
-u_char* handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
+u_char* handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
+{
+    const struct ether_header* ethernetHeader;
+    const struct ip* ipHeader;
+    const struct udphdr* udpHeader;
+
+    char sourceIp[INET_ADDRSTRLEN];
+    char destIp[INET_ADDRSTRLEN];
+    u_int sourcePort, destPort;
+    u_char *data;
+    int dataLength = 0;
+    string dataStr = "";
+
+    ethernetHeader = (struct ether_header*)packet;
+    ipHeader = (struct ip*)(packet + sizeof(struct ether_header));
+    if (ipHeader->ip_p == IPPROTO_UDP)
+    {
+        udpHeader = (udphdr*)(packet + sizeof(struct ether_header) + sizeof(struct ip));
+        sourcePort = ntohs(udpHeader->uh_sport);
+        destPort = ntohs(udpHeader->uh_dport);
+        data = (u_char*)(packet + sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr));
+        dataLength = pkthdr->len - (sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr));
+
+        fprintf(stdout,"UDP: ");
+        fprintf(stdout,"[srcport: %d] -> [dstport:%d]\n",sourcePort, destPort);
+
+        for (int i = 0; i < dataLength; i++)
+        {
+            if ((data[i] >= 32 && data[i] <= 126) || data[i] == 10 || data[i] == 11 || data[i] == 13)
+            {
+                dataStr += (char)data[i];
+            } else
+            {
+                dataStr += ".";
+            }
+        }
+        if (dataLength > 0)
+        {
+            cout << dataStr << endl;
+        }
+    }
+}
+
+u_int8_t handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
     const struct my_ip* ip;
     u_int length = pkthdr->len;
     u_int hlen,off,version;
     int i;
+    u_int8_t prot;
 
     int len;
 
@@ -138,11 +198,16 @@ u_char* handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* p
     ip = (struct my_ip*)(packet + sizeof(struct ether_header));
     length -= sizeof(struct ether_header);
 
+    /**
+     * Protocol number
+     */
+    prot = ip->ip_p;
+
     /* check to see we have a packet of valid length */
     if (length < sizeof(struct my_ip))
     {
         printf("truncated ip %d",length);
-        return NULL;
+        return -1;
     }
 
     len     = ntohs(ip->ip_len);
@@ -153,7 +218,7 @@ u_char* handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* p
     if(version != 4)
     {
         fprintf(stdout,"Unknown version %d\n",version);
-        return NULL;
+        return -1;
     }
 
     /* check header length */
@@ -170,14 +235,14 @@ u_char* handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* p
     off = ntohs(ip->ip_off);
     if((off & 0x1fff) == 0 )/* aka no 1's in first 13 bits */
     {/* print SOURCE DESTINATION hlen version len offset */
-        fprintf(stdout,"IP: ");
+        /*fprintf(stdout,"IP: ");
         fprintf(stdout,"[srcip: %s] -> ",
                 inet_ntoa(ip->ip_src));
         fprintf(stdout,"[dstip:%s] [header_length:%d] [version:%d] [packet_lenght:%d] [offset:%d]\n",
                 inet_ntoa(ip->ip_dst),
-                hlen,version,len,off);
+                hlen,version,len,off);*/
     }
-    return NULL;
+    return prot;
 }
 
 /* handle ethernet packets, much of this code gleaned from
@@ -228,10 +293,9 @@ u_int16_t handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u
 
 int main(int argc,char **argv)
 {
-    char dev[] = "";
-    cout << "please enter the name if device" << endl;
-    cin >> dev;
-    //char dev[] = "wlp7s0";
+    char dev[] = "enp0s25.157:1";
+    //cout << "please enter the name if device" << endl;
+    //cin >> dev;
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t* descr;
     struct bpf_program fp;      /* hold compiled program     */
@@ -240,7 +304,8 @@ int main(int argc,char **argv)
     u_char* args = NULL;
 
     /* Options must be passed in as a string because I am lazy */
-    if(argc < 2){
+    if(argc < 2)
+    {
         fprintf(stdout,"Usage: %s numpackets \"options\"\n",argv[0]);
         return 0;
     }
