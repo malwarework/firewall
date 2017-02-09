@@ -11,6 +11,7 @@
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 #include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
 #include <array>
 #include <iostream>
 #include <boost/json/src/json.hpp>
@@ -27,6 +28,7 @@ json handle_ethernet(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char*
 json handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 json handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 json handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
+json handle_ICMP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 
 struct my_ip
 {
@@ -87,6 +89,7 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
         switch(ip_prot)
         {
             case IPPROTO_ICMP:
+                js["icmp"] = handle_ICMP(args,pkthdr,packet);
                 break;
             case IPPROTO_TCP:
                 js["tcp"] = handle_TCP(args,pkthdr,packet);
@@ -270,6 +273,111 @@ json handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pack
         fprintf(stdout,"[dstip:%s] [header_length:%d] [version:%d] [packet_lenght:%d] [offset:%d]\n",
                 inet_ntoa(ip->ip_dst),
                 hlen,version,len,off);*/
+    }
+    return js;
+}
+
+json handle_ICMP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
+{
+    const struct icmp* icmpHeader;
+    const struct ip* ipHeader;
+    json js;
+    u_char icmpType;
+    u_char	icmpCode;		/* type sub code */
+    u_short	icmpCksum;		/* ones complement cksum of struct */
+
+    ipHeader = (struct ip*)(packet + sizeof(struct ether_header));
+    icmpHeader = (icmp*)(packet + sizeof(struct ether_header) + sizeof(struct ip));
+    icmpType = icmpHeader->icmp_type;
+    icmpCode = icmpHeader->icmp_code;
+    icmpCksum = icmpHeader->icmp_cksum;
+    js["chsum"] = icmpCksum;
+    switch(icmpType)
+    {
+        case ICMP_ECHOREPLY:
+            js["type"] = "ICMP_ECHOREPLY";
+            break;
+        case ICMP_UNREACH:
+            js["type"] = "ICMP_UNREACH";
+            switch(icmpCode)
+            {
+                case ICMP_UNREACH_NET:
+                    js["code"] = "ICMP_UNREACH";
+                    break;
+                case ICMP_UNREACH_HOST:
+                    js["code"] = "ICMP_UNREACH_HOST";
+                    break;
+                case ICMP_UNREACH_PROTOCOL:
+                    js["code"] = "ICMP_UNREACH_PROTOCOL";
+                    break;
+                case ICMP_UNREACH_PORT:
+                    js["code"] = "ICMP_UNREACH_PORT";
+                    break;
+                case ICMP_UNREACH_NEEDFRAG:
+                    js["code"] = "ICMP_UNREACH_NEEDFRAG";
+                    break;
+                case ICMP_UNREACH_SRCFAIL:
+                    js["code"] = "ICMP_UNREACH_SRCFAIL";
+                    break;
+            }
+            break;
+        case ICMP_SOURCEQUENCH:
+            js["type"] = "ICMP_SOURCEQUENCH";
+            break;
+        case ICMP_REDIRECT:
+            js["type"] = "ICMP_REDIRECT";
+            switch(icmpCode)
+            {
+                case ICMP_REDIRECT_NET:
+                    js["code"] = "ICMP_REDIRECT_NET";
+                    break;
+                case ICMP_REDIRECT_HOST:
+                    js["code"] = "ICMP_REDIRECT_HOST";
+                    break;
+                case ICMP_REDIRECT_TOSNET:
+                    js["code"] = "ICMP_REDIRECT_TOSNET";
+                    break;
+                case ICMP_REDIRECT_TOSHOST:
+                    js["code"] = "ICMP_REDIRECT_TOSHOST";
+                    break;
+            }
+            break;
+        case ICMP_ECHO:
+            js["type"] = "ICMP_ECHO";
+            break;
+        case ICMP_PARAMPROB:
+            js["type"] = "ICMP_PARAMPROB";
+            break;
+        case ICMP_TSTAMP:
+            js["type"] = "ICMP_TSTAMP";
+            break;
+        case ICMP_TSTAMPREPLY:
+            js["type"] = "ICMP_TSTAMPREPLY";
+            break;
+        case ICMP_IREQ:
+            js["type"] = "ICMP_IREQ";
+            break;
+        case ICMP_IREQREPLY:
+            js["type"] = "ICMP_IREQREPLY";
+            break;
+        case ICMP_MASKREQ:
+            js["type"] = "ICMP_MASKREQ";
+            break;
+        case ICMP_MASKREPLY:
+            js["type"] = "ICMP_MASKREPLY";
+            break;
+        case ICMP_TIMXCEED:
+            js["type"] = "ICMP_TIMXCEED";
+            switch(icmpCode)
+            {
+                case ICMP_TIMXCEED_INTRANS:
+                    js["code"] = "ICMP_TIMXCEED_INTRANS";
+                    break;
+                case ICMP_TIMXCEED_REASS:
+                    js["code"] = "ICMP_TIMXCEED_REASS";
+                    break;
+            }
+            break;
     }
     return js;
 }
