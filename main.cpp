@@ -15,20 +15,31 @@
 #include <array>
 #include <iostream>
 #include <boost/json/src/json.hpp>
+#include <bprinter/include/bprinter/table_printer.h>
 
 #ifndef ETHER_HDRLEN
 #define ETHER_HDRLEN 14
 #endif
 
+#if defined(USE_BOOST_KARMA)
+#include <boost/spirit/include/karma.hpp>
+namespace karma = boost::spirit::karma;
+#endif
 
 using namespace std;
 using json = nlohmann::json;
+using bprinter::TablePrinter;
 
 json handle_ethernet(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 json handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 json handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 json handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 json handle_ICMP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
+
+typedef struct _configuration Configuration;
+struct _configuration {
+    TablePrinter *tp;
+};
 
 struct my_ip
 {
@@ -435,11 +446,73 @@ json handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char
     return js;
 }
 
-int main(int argc,char **argv)
+int start()
 {
-    char dev[] = "enp0s25.157:1";
+    int argc = 2;
+    char dev[] = "wlp7s0";
     //cout << "please enter the name if device" << endl;
     //cin >> dev;
+    char errbuf[PCAP_ERRBUF_SIZE];
+    pcap_t* descr;
+    struct bpf_program fp;      /* hold compiled program     */
+    bpf_u_int32 maskp;          /* subnet mask               */
+    bpf_u_int32 netp;           /* ip                        */
+    u_char* args = NULL;
+
+    /* Options must be passed in as a string because I am lazy */
+    if(argc < 2)
+    {
+        fprintf(stdout,"Usage: %s numpackets \"options\"\n","asdasd");
+        return 0;
+    }
+
+    /* grab a device to peak into... */
+    /*dev = pcap_lookupdev(errbuf);
+    if(dev == NULL)
+    { printf("%s\n",errbuf); exit(1); }*/
+
+    /* ask pcap for the network address and mask of the device */
+    pcap_lookupnet(dev,&netp,&maskp,errbuf);
+
+    /* open device for reading. NOTE: defaulting to
+     * promiscuous mode*/
+    descr = pcap_open_live(dev,BUFSIZ,1,-1,errbuf);
+    if(descr == NULL)
+    { printf("pcap_open_live(): %s\n",errbuf); exit(1); }
+
+
+    if(argc > 2)
+    {
+        /* Lets try and compile the program.. non-optimized */
+        if(pcap_compile(descr,&fp,0,0,netp) == -1)
+        { fprintf(stderr,"Error calling pcap_compile\n"); exit(1); }
+
+        /* set the compiled program as the filter */
+        if(pcap_setfilter(descr,&fp) == -1)
+        { fprintf(stderr,"Error setting filter\n"); exit(1); }
+    }
+
+    /* ... and loop */
+    pcap_loop(descr,atoi("2000"),my_callback,args);
+
+    fprintf(stdout,"\nfinished\n");
+    return 0;
+}
+
+int main(int argc,char **argv)
+{
+    char dev[] = "wlp7s0";
+    //cout << "please enter the name if device" << endl;
+    //cin >> dev;
+
+    TablePrinter tp(&cout);
+    tp.AddColumn("Name", 25);
+    tp.AddColumn("Age", 5);
+    tp.AddColumn("Position", 30);
+    tp.AddColumn("Allowance", 9);
+    //Configuration conf;
+    //conf= {&tp};
+
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t* descr;
     struct bpf_program fp;      /* hold compiled program     */
@@ -481,7 +554,7 @@ int main(int argc,char **argv)
     }
 
     /* ... and loop */
-    pcap_loop(descr,atoi(argv[1]),my_callback,args);
+    pcap_loop(descr,-1,my_callback,NULL);
 
     fprintf(stdout,"\nfinished\n");
     return 0;
