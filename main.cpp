@@ -16,6 +16,7 @@
 #include <iostream>
 #include <boost/json/src/json.hpp>
 #include <bprinter/include/bprinter/table_printer.h>
+#include <boost/program_options.hpp>
 
 #ifndef ETHER_HDRLEN
 #define ETHER_HDRLEN 14
@@ -28,7 +29,8 @@ namespace karma = boost::spirit::karma;
 
 using namespace std;
 using json = nlohmann::json;
-using bprinter::TablePrinter;
+using TablePrinter = bprinter::TablePrinter;
+namespace po = boost::program_options;
 
 json handle_ethernet(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
 json handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet);
@@ -39,6 +41,7 @@ json handle_ICMP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
 typedef struct _configuration Configuration;
 struct _configuration {
     TablePrinter *tp;
+    char* format;
 };
 
 struct my_ip
@@ -84,43 +87,85 @@ struct my_tcp {
 /* looking at ethernet headers */
 void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
-    json js, jsether;
-    jsether = handle_ethernet(args,pkthdr,packet);
-    u_int16_t type = jsether["type"];
+    try {
+        json js, jsether;
+        jsether = handle_ethernet(args,pkthdr,packet);
+        u_int16_t type = jsether["type"];
 
-    js["ether"] = jsether;
+        Configuration *conf = (Configuration *) args;
+        TablePrinter *tp = conf->tp;
+        char* format = conf->format;
 
-    if(type == ETHERTYPE_IP)
-    {/* handle IP packet */
-        json jsudp;
-        json jstcp;
-        json jsHandle = handle_IP(args,pkthdr,packet);
-        js["ip"] = jsHandle;
-        u_int8_t ip_prot = jsHandle["prot"];
-        switch(ip_prot)
-        {
-            case IPPROTO_ICMP:
-                js["icmp"] = handle_ICMP(args,pkthdr,packet);
-                break;
-            case IPPROTO_TCP:
-                js["tcp"] = handle_TCP(args,pkthdr,packet);
-                //jstcp = handle_TCP(args,pkthdr,packet);
-                //js.push_back(jstcp);
-                break;
-            case IPPROTO_UDP:
-                js["udp"] = handle_UDP(args,pkthdr,packet);
-                //js.push_back(jsudp);
+        js["ether"] = jsether;
+        string srcmac = jsether["srcmac"];
+        string dstmac = jsether["dstmac"];
 
-                break;
+        if(type == ETHERTYPE_IP)
+        {/* handle IP packet */
+            json jsudp;
+            json jstcp;
+            json jsHandle = handle_IP(args,pkthdr,packet);
+            js["ip"] = jsHandle;
+            u_int8_t ip_prot = jsHandle["prot"];
+            string prot;
+            int srcport = 0;
+            int dstport = 0;
+            string ssrcport;
+            string sdstport;
+            string srcip = jsHandle["src"];
+            string dstip = jsHandle["dst"];
+            prot = "ip";
+            switch(ip_prot)
+            {
+                case IPPROTO_ICMP:
+                    prot = "icmp";
+                    js["icmp"] = handle_ICMP(args,pkthdr,packet);
+                    ssrcport = js["icmp"]["type"];
+                    if((ssrcport == "ICMP_UNREACH") || (ssrcport == "ICMP_REDIRECT") ||(ssrcport == "ICMP_TIMXCEED"))
+                        sdstport = js["icmp"]["code"];
+                    srcport = 0;
+                    dstport = 0;
+                    break;
+                case IPPROTO_TCP:
+                    prot = "tcp";
+                    js["tcp"] = handle_TCP(args,pkthdr,packet);
+                    srcport = (js["tcp"]["srcport"]);
+                    dstport = (js["tcp"]["dstport"]);
+                    //jstcp = handle_TCP(args,pkthdr,packet);
+                    //js.push_back(jstcp);
+                    break;
+                case IPPROTO_UDP:
+                    prot = "udp";
+                    js["udp"] = handle_UDP(args,pkthdr,packet);
+                    srcport = (js["udp"]["srcport"]);
+                    dstport = (js["udp"]["dstport"]);
+                    //js.push_back(jsudp);
+
+                    break;
+            }
+            if(strcmp(format, "json") == 0)
+                cout << js << endl;
+            else
+            {
+                if(ip_prot == IPPROTO_ICMP)
+                    *tp << srcmac << dstmac << prot << srcip << dstip << ssrcport << sdstport;
+                else
+                    *tp << srcmac << dstmac << prot << srcip << dstip << srcport << dstport;
+            }
         }
-        cout << js << endl;
+        else if(type == ETHERTYPE_ARP)
+        {/* handle arp packet */
+        }
+        else if(type == ETHERTYPE_REVARP)
+        {/* handle reverse arp packet */
+        }
     }
-    else if(type == ETHERTYPE_ARP)
-    {/* handle arp packet */
+    catch(exception &e)
+    {
+        cerr << e.what() << endl;
     }
-    else if(type == ETHERTYPE_REVARP)
-    {/* handle reverse arp packet */
-    }
+
+
 }
 
 json handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
@@ -135,6 +180,7 @@ json handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pack
     int dataLength = 0;
     string dataStr = "";
     json js;
+
 
     ethernetHeader = (struct ether_header*)packet;
     ipHeader = (struct ip*)(packet + sizeof(struct ether_header));
@@ -428,20 +474,20 @@ json handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char
     /* check to see if we have an ip packet */
     if (ether_type == ETHERTYPE_IP)
     {
-        fprintf(stdout,"(IP)");
+        //fprintf(stdout,"(IP)");
     }
     else  if (ether_type == ETHERTYPE_ARP)
     {
-        fprintf(stdout,"(ARP)");
+        //fprintf(stdout,"(ARP)");
     }
     else  if (eptr->ether_type == ETHERTYPE_REVARP)
     {
-        fprintf(stdout,"(RARP)");
+        //fprintf(stdout,"(RARP)");
     }
     else {
-        fprintf(stdout,"(?)");
+        //fprintf(stdout,"(?)");
     }
-    fprintf(stdout," %d\n",length);
+    //fprintf(stdout," %d\n",length);
 
     return js;
 }
@@ -501,17 +547,63 @@ int start()
 
 int main(int argc,char **argv)
 {
-    char dev[] = "wlp7s0";
-    //cout << "please enter the name if device" << endl;
-    //cin >> dev;
+    po::options_description desc("Allowed options");
+    desc.add_options()
+            ("help,h", "produce help message")
+            ("dev,d", po::value<string>(), "set device")
+            ("count,c", po::value<int>(), "set count of sniffing packets")
+            ("json", "set json output format")
+            ;
+    po::variables_map vm;
+    po::store(po::parse_command_line(argc, (const char**)argv, desc), vm);
+    po::notify(vm);
 
+    if(vm.count("help"))
+    {
+        cout << desc << "\n";
+        return 1;
+    }
+
+    string dev;
+    if(vm.count("dev"))
+    {
+        dev = vm["dev"].as<string>();
+    }
+    else
+    {
+        cout << "Please specify device" << endl;
+        return 1;
+    }
+
+    string format = "table";
+    if(vm.count("json"))
+    {
+        format = "json";
+    }
+
+    int count = -1;
+    if(vm.count("count"))
+    {
+        count = vm["count"].as<int>();
+    }
+
+    Configuration conf;
     TablePrinter tp(&cout);
-    tp.AddColumn("Name", 25);
-    tp.AddColumn("Age", 5);
-    tp.AddColumn("Position", 30);
-    tp.AddColumn("Allowance", 9);
-    //Configuration conf;
-    //conf= {&tp};
+    if(strcmp(format.c_str(), "json") != 0)
+    {
+        tp.AddColumn("SRCMAC", 20);
+        tp.AddColumn("DSTMAC", 20);
+        tp.AddColumn("PROTOCOL", 5);
+        tp.AddColumn("SRCIP", 15);
+        tp.AddColumn("DSTIP", 15);
+        tp.AddColumn("SRCPORT", 15);
+        tp.AddColumn("DSTPORT", 15);
+        tp.PrintHeader();
+    }
+
+
+    conf.tp = &tp;
+    conf.format = (char*)format.c_str();
 
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t* descr;
@@ -527,34 +619,19 @@ int main(int argc,char **argv)
         return 0;
     }
 
-    /* grab a device to peak into... */
-    /*dev = pcap_lookupdev(errbuf);
-    if(dev == NULL)
-    { printf("%s\n",errbuf); exit(1); }*/
-
     /* ask pcap for the network address and mask of the device */
-    pcap_lookupnet(dev,&netp,&maskp,errbuf);
+    pcap_lookupnet(dev.c_str(),&netp,&maskp,errbuf);
 
     /* open device for reading. NOTE: defaulting to
      * promiscuous mode*/
-    descr = pcap_open_live(dev,BUFSIZ,1,-1,errbuf);
+    descr = pcap_open_live(dev.c_str(),BUFSIZ,1,-1,errbuf);
     if(descr == NULL)
     { printf("pcap_open_live(): %s\n",errbuf); exit(1); }
 
-
-    if(argc > 2)
-    {
-        /* Lets try and compile the program.. non-optimized */
-        if(pcap_compile(descr,&fp,argv[2],0,netp) == -1)
-        { fprintf(stderr,"Error calling pcap_compile\n"); exit(1); }
-
-        /* set the compiled program as the filter */
-        if(pcap_setfilter(descr,&fp) == -1)
-        { fprintf(stderr,"Error setting filter\n"); exit(1); }
-    }
-
     /* ... and loop */
-    pcap_loop(descr,-1,my_callback,NULL);
+    pcap_loop(descr,count,my_callback,(u_char*)&conf);
+    if(strcmp(format.c_str(), "json") != 0)
+        tp.PrintFooter();
 
     fprintf(stdout,"\nfinished\n");
     return 0;
