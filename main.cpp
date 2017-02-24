@@ -571,7 +571,7 @@ int main(int argc,char **argv)
     }
     else
     {
-        cout << "Please specify device" << endl;
+        cout << "Please specify device" << endl << "Use prefix -h" << endl;
         return 1;
     }
 
