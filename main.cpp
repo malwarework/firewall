@@ -1,12 +1,8 @@
 #include <pcap.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <errno.h>
-#include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
-#include <net/ethernet.h>
 #include <netinet/ether.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
@@ -20,11 +16,6 @@
 
 #ifndef ETHER_HDRLEN
 #define ETHER_HDRLEN 14
-#endif
-
-#if defined(USE_BOOST_KARMA)
-#include <boost/spirit/include/karma.hpp>
-namespace karma = boost::spirit::karma;
 #endif
 
 using namespace std;
@@ -44,6 +35,9 @@ struct _configuration {
     char* format;
 };
 
+/**
+ * Структура ip-пакета
+ */
 struct my_ip
 {
     u_int8_t	ip_vhl;		/* header length, version */
@@ -62,29 +56,9 @@ struct my_ip
     struct	in_addr ip_src,ip_dst;	/* source and dest address */
 };
 
-struct my_tcp {
-    u_short th_sport;	/* source port */
-    u_short th_dport;	/* destination port */
-    tcp_seq th_seq;		/* sequence number */
-    tcp_seq th_ack;		/* acknowledgement number */
-    u_char th_offx2;	/* data offset, rsvd */
-#define TH_OFF(th)	(((th)->th_offx2 & 0xf0) >> 4)
-    u_char th_flags;
-#define TH_FIN 0x01
-#define TH_SYN 0x02
-#define TH_RST 0x04
-#define TH_PUSH 0x08
-#define TH_ACK 0x10
-#define TH_URG 0x20
-#define TH_ECE 0x40
-#define TH_CWR 0x80
-#define TH_FLAGS (TH_FIN|TH_SYN|TH_RST|TH_ACK|TH_URG|TH_ECE|TH_CWR)
-    u_short th_win;		/* window */
-    u_short th_sum;		/* checksum */
-    u_short th_urp;		/* urgent pointer */
-};
-
-/* looking at ethernet headers */
+/*
+ * Колбэк для анализа заголовка ethernet-кадра
+ */
 void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
     try {
@@ -101,7 +75,8 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
         string dstmac = jsether["dstmac"];
 
         if(type == ETHERTYPE_IP)
-        {/* handle IP packet */
+        {
+            /* handle IP packet */
             json jsudp;
             json jstcp;
             json jsHandle = handle_IP(args,pkthdr,packet);
@@ -131,16 +106,12 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
                     js["tcp"] = handle_TCP(args,pkthdr,packet);
                     srcport = (js["tcp"]["srcport"]);
                     dstport = (js["tcp"]["dstport"]);
-                    //jstcp = handle_TCP(args,pkthdr,packet);
-                    //js.push_back(jstcp);
                     break;
                 case IPPROTO_UDP:
                     prot = "udp";
                     js["udp"] = handle_UDP(args,pkthdr,packet);
                     srcport = (js["udp"]["srcport"]);
                     dstport = (js["udp"]["dstport"]);
-                    //js.push_back(jsudp);
-
                     break;
             }
             if(strcmp(format, "json") == 0)
@@ -154,10 +125,12 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
             }
         }
         else if(type == ETHERTYPE_ARP)
-        {/* handle arp packet */
+        {
+            /* handle arp packet */
         }
         else if(type == ETHERTYPE_REVARP)
-        {/* handle reverse arp packet */
+        {
+            /* handle reverse arp packet */
         }
     }
     catch(exception &e)
@@ -168,21 +141,19 @@ void my_callback(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
 
 }
 
+/**
+ * Анализ tcp-пакета
+ */
 json handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
-    const struct ether_header* ethernetHeader;
     const struct ip* ipHeader;
     const struct tcphdr* tcpHeader;
-    char sourceIp[INET_ADDRSTRLEN];
-    char destIp[INET_ADDRSTRLEN];
     u_int sourcePort, destPort;
     u_char *data;
     int dataLength = 0;
     string dataStr = "";
     json js;
 
-
-    ethernetHeader = (struct ether_header*)packet;
     ipHeader = (struct ip*)(packet + sizeof(struct ether_header));
     if (ipHeader->ip_p == IPPROTO_TCP)
     {
@@ -192,8 +163,6 @@ json handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pack
         data = (u_char*)(packet + sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct tcphdr));
         dataLength = pkthdr->len - (sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct tcphdr));
 
-        //fprintf(stdout,"TCP: ");
-        //fprintf(stdout,"[srcport: %d] -> [dstport:%d]\n",sourcePort, destPort);
         js["srcport"] = sourcePort;
         js["dstport"] = destPort;
 
@@ -210,27 +179,25 @@ json handle_TCP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pack
         if (dataLength > 0)
         {
             js["data"] = dataStr;
-            //cout << dataStr << endl;
         }
     }
     return js;
 }
 
+/**
+ * Анализ udp-пакета
+ */
 json handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
-    const struct ether_header* ethernetHeader;
     const struct ip* ipHeader;
     const struct udphdr* udpHeader;
     json js;
 
-    char sourceIp[INET_ADDRSTRLEN];
-    char destIp[INET_ADDRSTRLEN];
     u_int sourcePort, destPort;
     u_char *data;
     int dataLength = 0;
     string dataStr = "";
 
-    ethernetHeader = (struct ether_header*)packet;
     ipHeader = (struct ip*)(packet + sizeof(struct ether_header));
     if (ipHeader->ip_p == IPPROTO_UDP)
     {
@@ -240,8 +207,6 @@ json handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pack
         data = (u_char*)(packet + sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr));
         dataLength = pkthdr->len - (sizeof(struct ether_header) + sizeof(struct ip) + sizeof(struct udphdr));
 
-        //fprintf(stdout,"UDP: ");
-        //fprintf(stdout,"[srcport: %d] -> [dstport:%d]\n",sourcePort, destPort);
         js["srcport"] = sourcePort;
         js["dstport"] = destPort;
 
@@ -258,12 +223,14 @@ json handle_UDP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pack
         if (dataLength > 0)
         {
             js["data"] = dataStr;
-            //cout << dataStr << endl;
         }
     }
     return js;
 }
 
+/**
+ * Анализ ip-пакета
+ */
 json handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
     const struct my_ip* ip;
@@ -334,16 +301,17 @@ json handle_IP (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pack
     return js;
 }
 
+/**
+ * Анализ icmp-пакета
+ */
 json handle_ICMP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
     const struct icmp* icmpHeader;
-    const struct ip* ipHeader;
     json js;
     u_char icmpType;
     u_char	icmpCode;		/* type sub code */
     u_short	icmpCksum;		/* ones complement cksum of struct */
 
-    ipHeader = (struct ip*)(packet + sizeof(struct ether_header));
     icmpHeader = (icmp*)(packet + sizeof(struct ether_header) + sizeof(struct ip));
     icmpType = icmpHeader->icmp_type;
     icmpCode = icmpHeader->icmp_code;
@@ -439,8 +407,8 @@ json handle_ICMP(u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* pac
     return js;
 }
 
-/* handle ethernet packets, much of this code gleaned from
- * print-ether.c from tcpdump source
+/*
+ * Анализ ethernet-кадра
  */
 json handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char* packet)
 {
@@ -458,15 +426,10 @@ json handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char
         return -1;
     }
 
-    /* lets start with the ether header... */
     eptr = (struct ether_header *) packet;
     ether_type = ntohs(eptr->ether_type);
     js["type"] = ether_type;
 
-    /* Lets print SOURCE DEST TYPE LENGTH */
-    //fprintf(stdout,"ETH: ");
-    //fprintf(stdout,"%s ",ether_ntoa((struct ether_addr*)eptr->ether_shost));
-    //fprintf(stdout,"%s ",ether_ntoa((struct ether_addr*)eptr->ether_dhost));
 
     js["srcmac"] = ether_ntoa((struct ether_addr*)eptr->ether_shost);
     js["dstmac"] = ether_ntoa((struct ether_addr*)eptr->ether_dhost);
@@ -487,66 +450,16 @@ json handle_ethernet (u_char *args,const struct pcap_pkthdr* pkthdr,const u_char
     else {
         //fprintf(stdout,"(?)");
     }
-    //fprintf(stdout," %d\n",length);
 
     return js;
 }
 
-int start()
-{
-    int argc = 2;
-    char dev[] = "wlp7s0";
-    //cout << "please enter the name if device" << endl;
-    //cin >> dev;
-    char errbuf[PCAP_ERRBUF_SIZE];
-    pcap_t* descr;
-    struct bpf_program fp;      /* hold compiled program     */
-    bpf_u_int32 maskp;          /* subnet mask               */
-    bpf_u_int32 netp;           /* ip                        */
-    u_char* args = NULL;
-
-    /* Options must be passed in as a string because I am lazy */
-    if(argc < 2)
-    {
-        fprintf(stdout,"Usage: %s numpackets \"options\"\n","asdasd");
-        return 0;
-    }
-
-    /* grab a device to peak into... */
-    /*dev = pcap_lookupdev(errbuf);
-    if(dev == NULL)
-    { printf("%s\n",errbuf); exit(1); }*/
-
-    /* ask pcap for the network address and mask of the device */
-    pcap_lookupnet(dev,&netp,&maskp,errbuf);
-
-    /* open device for reading. NOTE: defaulting to
-     * promiscuous mode*/
-    descr = pcap_open_live(dev,BUFSIZ,1,-1,errbuf);
-    if(descr == NULL)
-    { printf("pcap_open_live(): %s\n",errbuf); exit(1); }
-
-
-    if(argc > 2)
-    {
-        /* Lets try and compile the program.. non-optimized */
-        if(pcap_compile(descr,&fp,0,0,netp) == -1)
-        { fprintf(stderr,"Error calling pcap_compile\n"); exit(1); }
-
-        /* set the compiled program as the filter */
-        if(pcap_setfilter(descr,&fp) == -1)
-        { fprintf(stderr,"Error setting filter\n"); exit(1); }
-    }
-
-    /* ... and loop */
-    pcap_loop(descr,atoi("2000"),my_callback,args);
-
-    fprintf(stdout,"\nfinished\n");
-    return 0;
-}
-
+/**
+ * Main function
+ */
 int main(int argc,char **argv)
 {
+    /*Options of boost*/
     po::options_description desc("Allowed options");
     desc.add_options()
             ("help,h", "produce help message")
@@ -558,6 +471,7 @@ int main(int argc,char **argv)
     po::store(po::parse_command_line(argc, (const char**)argv, desc), vm);
     po::notify(vm);
 
+    /*In case if help*/
     if(vm.count("help"))
     {
         cout << desc << "\n";
@@ -565,6 +479,7 @@ int main(int argc,char **argv)
     }
 
     string dev;
+    /*In case if dev*/
     if(vm.count("dev"))
     {
         dev = vm["dev"].as<string>();
@@ -576,12 +491,14 @@ int main(int argc,char **argv)
     }
 
     string format = "table";
+    /*In case if output format is json*/
     if(vm.count("json"))
     {
         format = "json";
     }
 
     int count = -1;
+    /*Set count of packets*/
     if(vm.count("count"))
     {
         count = vm["count"].as<int>();
@@ -607,10 +524,8 @@ int main(int argc,char **argv)
 
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t* descr;
-    struct bpf_program fp;      /* hold compiled program     */
     bpf_u_int32 maskp;          /* subnet mask               */
     bpf_u_int32 netp;           /* ip                        */
-    u_char* args = NULL;
 
     /* Options must be passed in as a string because I am lazy */
     if(argc < 2)
@@ -622,11 +537,16 @@ int main(int argc,char **argv)
     /* ask pcap for the network address and mask of the device */
     pcap_lookupnet(dev.c_str(),&netp,&maskp,errbuf);
 
-    /* open device for reading. NOTE: defaulting to
-     * promiscuous mode*/
+    /*
+     * open device for reading. NOTE: defaulting to
+     * promiscuous mode
+     */
     descr = pcap_open_live(dev.c_str(),BUFSIZ,1,-1,errbuf);
     if(descr == NULL)
-    { printf("pcap_open_live(): %s\n",errbuf); exit(1); }
+    {
+        printf("pcap_open_live(): %s\n",errbuf);
+        exit(1);
+    }
 
     /* ... and loop */
     pcap_loop(descr,count,my_callback,(u_char*)&conf);
